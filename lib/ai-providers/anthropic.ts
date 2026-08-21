@@ -1,32 +1,42 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { ChatRequest, ChatResponse } from '../types';
+import { AIResponse, Message } from './types';
 
-const anthropic = new Anthropic({
-  apiKey: process.env.NEXT_PUBLIC_ANTHROPIC_API_KEY,
-});
+let anthropicInstance: Anthropic | null = null;
 
-export async function chatWithAnthropic(request: ChatRequest): Promise<ChatResponse> {
-  try {
-    if (!process.env.NEXT_PUBLIC_ANTHROPIC_API_KEY) {
-      return {
-        success: false,
-        error: 'Anthropic API key not configured',
-      };
+function getAnthropicInstance(): Anthropic {
+  if (!anthropicInstance) {
+    const apiKey = process.env.NEXT_PUBLIC_ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      throw new Error('NEXT_PUBLIC_ANTHROPIC_API_KEY not configured');
     }
+    anthropicInstance = new Anthropic({
+      apiKey,
+      dangerouslyAllowBrowser: true, // Allow browser usage
+    });
+  }
+  return anthropicInstance;
+}
 
-    // Extract system message if present
-    const systemMessage = request.messages
-      .filter((m) => m.role === 'system')
-      .map((m) => m.content)
-      .join('\n');
+export async function useAnthropic(
+  model: string,
+  messages: Message[],
+  temperature: number = 0.7,
+  maxTokens: number = 2000
+): Promise<AIResponse> {
+  try {
+    const client = getAnthropicInstance();
 
-    const userMessages = request.messages.filter((m) => m.role !== 'system');
+    const systemMessage = 'You are a helpful AI assistant.';
+    const userMessages = messages.map((m) => ({
+      role: m.role,
+      content: m.content,
+    })) as Anthropic.MessageParam[];
 
-    const response = await anthropic.messages.create({
-      model: request.model.includes('claude') ? request.model : 'claude-3-opus-20240229',
-      max_tokens: request.maxTokens || 2000,
-      system: systemMessage || undefined,
-      messages: userMessages as any,
+    const response = await client.messages.create({
+      model: model || 'claude-3-sonnet-20240229',
+      max_tokens: maxTokens,
+      system: systemMessage,
+      messages: userMessages,
     });
 
     const content = response.content[0]?.type === 'text' ? response.content[0].text : '';
@@ -35,16 +45,15 @@ export async function chatWithAnthropic(request: ChatRequest): Promise<ChatRespo
       success: true,
       content,
       usage: {
-        inputTokens: response.usage?.input_tokens || 0,
-        outputTokens: response.usage?.output_tokens || 0,
+        inputTokens: response.usage?.input_tokens,
+        outputTokens: response.usage?.output_tokens,
         totalTokens: (response.usage?.input_tokens || 0) + (response.usage?.output_tokens || 0),
       },
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
     return {
       success: false,
-      error: `Anthropic Error: ${message}`,
+      error: error instanceof Error ? error.message : 'Unknown Anthropic error',
     };
   }
 }

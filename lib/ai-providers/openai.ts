@@ -1,24 +1,36 @@
 import { OpenAI } from 'openai';
-import { ChatRequest, ChatResponse } from '../types';
+import { AIResponse, Message } from './types';
 
-const openai = new OpenAI({
-  apiKey: process.env.NEXT_PUBLIC_OPENAI_API_KEY,
-});
+let openaiInstance: OpenAI | null = null;
 
-export async function chatWithOpenAI(request: ChatRequest): Promise<ChatResponse> {
-  try {
-    if (!process.env.NEXT_PUBLIC_OPENAI_API_KEY) {
-      return {
-        success: false,
-        error: 'OpenAI API key not configured',
-      };
+function getOpenAIInstance(): OpenAI {
+  if (!openaiInstance) {
+    const apiKey = process.env.NEXT_PUBLIC_OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error('NEXT_PUBLIC_OPENAI_API_KEY not configured');
     }
+    openaiInstance = new OpenAI({
+      apiKey,
+      dangerouslyAllowBrowser: true, // Allow browser usage
+    });
+  }
+  return openaiInstance;
+}
 
-    const response = await openai.chat.completions.create({
-      model: request.model.includes('gpt') ? request.model : 'gpt-4',
-      messages: request.messages,
-      temperature: request.temperature || 0.7,
-      max_tokens: request.maxTokens || 2000,
+export async function useOpenAI(
+  model: string,
+  messages: Message[],
+  temperature: number = 0.7,
+  maxTokens: number = 2000
+): Promise<AIResponse> {
+  try {
+    const client = getOpenAIInstance();
+
+    const response = await client.chat.completions.create({
+      model: model || 'gpt-3.5-turbo',
+      messages,
+      temperature,
+      max_tokens: maxTokens,
     });
 
     const content = response.choices[0]?.message?.content || '';
@@ -27,16 +39,15 @@ export async function chatWithOpenAI(request: ChatRequest): Promise<ChatResponse
       success: true,
       content,
       usage: {
-        inputTokens: response.usage?.prompt_tokens || 0,
-        outputTokens: response.usage?.completion_tokens || 0,
-        totalTokens: response.usage?.total_tokens || 0,
+        inputTokens: response.usage?.prompt_tokens,
+        outputTokens: response.usage?.completion_tokens,
+        totalTokens: response.usage?.total_tokens,
       },
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
     return {
       success: false,
-      error: `OpenAI Error: ${message}`,
+      error: error instanceof Error ? error.message : 'Unknown OpenAI error',
     };
   }
 }

@@ -1,35 +1,44 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { ChatRequest, ChatResponse } from '../types';
+import { AIResponse, Message } from './types';
 
-const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '');
+let googleInstance: GoogleGenerativeAI | null = null;
 
-export async function chatWithGoogle(request: ChatRequest): Promise<ChatResponse> {
-  try {
-    if (!process.env.NEXT_PUBLIC_GOOGLE_API_KEY) {
-      return {
-        success: false,
-        error: 'Google API key not configured',
-      };
+function getGoogleInstance(): GoogleGenerativeAI {
+  if (!googleInstance) {
+    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
+    if (!apiKey) {
+      throw new Error('NEXT_PUBLIC_GOOGLE_API_KEY not configured');
     }
+    googleInstance = new GoogleGenerativeAI(apiKey);
+  }
+  return googleInstance;
+}
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+export async function useGoogle(
+  model: string,
+  messages: Message[],
+  temperature: number = 0.7,
+  maxTokens: number = 2000
+): Promise<AIResponse> {
+  try {
+    const client = getGoogleInstance();
+    const genModel = client.getGenerativeModel({ model: model || 'gemini-pro' });
 
-    const chat = model.startChat({
-      history: request.messages
-        .filter((m) => m.role !== 'system')
-        .slice(0, -1)
-        .map((m) => ({
-          role: m.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: m.content }],
-        })),
+    const lastMessage = messages[messages.length - 1]?.content || '';
+
+    const result = await genModel.generateContent({
+      contents: [
+        {
+          role: 'user',
+          parts: [{ text: lastMessage }],
+        },
+      ],
       generationConfig: {
-        temperature: request.temperature || 0.7,
-        maxOutputTokens: request.maxTokens || 2000,
+        temperature,
+        maxOutputTokens: maxTokens,
       },
     });
 
-    const lastMessage = request.messages[request.messages.length - 1]?.content || '';
-    const result = await chat.sendMessage(lastMessage);
     const response = await result.response;
     const content = response.text();
 
@@ -38,10 +47,9 @@ export async function chatWithGoogle(request: ChatRequest): Promise<ChatResponse
       content,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
     return {
       success: false,
-      error: `Google Generative AI Error: ${message}`,
+      error: error instanceof Error ? error.message : 'Unknown Google error',
     };
   }
 }
